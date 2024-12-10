@@ -142,8 +142,8 @@ if __name__ == "__main__":
     )
 
     # Hyperparams
-    batch_size = 64
-    lr = 3e-4
+    batch_size = 128
+    lr = 1e-4
     epochs = 5
     state_dim = 128
     action_dim = 2
@@ -164,9 +164,11 @@ if __name__ == "__main__":
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
 
-    patience = 50  # 连续多少个批次损失未改善时停止训练
-    early_stop_counter = 0  # Early Stopping 计数器
-    previous_loss = float('inf')
+    # Early Stopping 和保存最佳模型逻辑
+    patience = 20  # 连续多少个 batch 损失未改善时保存最佳模型
+    best_loss = float('inf')
+    early_stop_counter = 0  # 连续未改善计数器
+    best_model_path = "best_model.pth"
     
     model.train()
     for epoch in range(epochs):
@@ -200,21 +202,27 @@ if __name__ == "__main__":
             
             total_loss += loss.item()
 
-            if loss.item() >= previous_loss:
-                early_stop_counter += 1
-            else:
+            if loss.item() < best_loss:
+                best_loss = loss.item()
                 early_stop_counter = 0
-            previous_loss = loss.item()
 
-            # 检查是否触发 Early Stopping
+                # Save the best model
+                torch.save(model.state_dict(), best_model_path)
+                print(f"Best model saved at batch {batch_idx + 1} with loss {best_loss:.4f}")
+
+            else:
+                early_stop_counter += 1
+
             if early_stop_counter >= patience:
-                print(f"Early stopping triggered at epoch {epoch + 1}, batch {batch_idx + 1}")
+                print(
+                    f"Stopping early at epoch {epoch + 1}, batch {batch_idx + 1} due to no improvement in {patience} batches.")
                 break
 
-            if (batch_idx + 1) % 100 == 0:
+            if (batch_idx + 1) % 20 == 0:
                 print(f"Batch {batch_idx + 1}/{len(train_loader)} - Loss: {loss.item():.4f}, dt: {dt:.2f}ms, norm: {norm:.4f}")
 
         if early_stop_counter >= patience:
             break
+
         avg_loss = total_loss / len(train_loader)
         print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
