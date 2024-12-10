@@ -133,6 +133,8 @@ class JEPA(nn.Module):
 #########################
 
 if __name__ == "__main__":
+    torch.set_float32_matmul_precision('high')
+
     device = (
         'cuda' if torch.cuda.is_available()
         else 'mps' if torch.backends.mps.is_available()
@@ -140,7 +142,7 @@ if __name__ == "__main__":
     )
 
     # Hyperparams
-    batch_size = 8
+    batch_size = 64
     lr = 3e-4
     epochs = 5
     state_dim = 128
@@ -161,11 +163,15 @@ if __name__ == "__main__":
 
     optimizer = optim.AdamW(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
+
+    patience = 50  # 连续多少个批次损失未改善时停止训练
+    early_stop_counter = 0  # Early Stopping 计数器
+    previous_loss = float('inf')
     
     model.train()
     for epoch in range(epochs):
         total_loss = 0.0
-        for states, actions in tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}"):
+        for batch_idx, (states, actions) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")):
             t0 = time.time()
             states = states.to(device)
             actions = actions.to(device)
@@ -193,7 +199,22 @@ if __name__ == "__main__":
             dt = (t1 - t0) * 1000
             
             total_loss += loss.item()
-            print(f"loss {loss.item()}, dt {dt:.2f}ms, norm {norm:.4f}")
-        
+
+            if loss.item() >= previous_loss:
+                early_stop_counter += 1
+            else:
+                early_stop_counter = 0
+            previous_loss = loss.item()
+
+            # 检查是否触发 Early Stopping
+            if early_stop_counter >= patience:
+                print(f"Early stopping triggered at epoch {epoch + 1}, batch {batch_idx + 1}")
+                break
+
+            if (batch_idx + 1) % 100 == 0:
+                print(f"Batch {batch_idx + 1}/{len(train_loader)} - Loss: {loss.item():.4f}, dt: {dt:.2f}ms, norm: {norm:.4f}")
+
+        if early_stop_counter >= patience:
+            break
         avg_loss = total_loss / len(train_loader)
         print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
