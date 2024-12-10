@@ -6,7 +6,6 @@ import numpy as np
 from copy import deepcopy
 from tqdm import tqdm
 import time
-from dataset import create_wall_dataloader
 
 #########################
 # Dataset and Dataloader
@@ -14,17 +13,20 @@ from dataset import create_wall_dataloader
 
 class TrajectoryDataset(Dataset):
     def __init__(self, states_path, actions_path):
-        self.states = np.load(states_path)  # shape (N, T, 2, 64, 64)
+        self.states = np.load(states_path, mmap_mode="r")  # shape (N, T, 2, 64, 64)
         self.actions = np.load(actions_path) # shape (N, T-1, 2)
         
-        self.states = torch.tensor(self.states, dtype=torch.float32)
-        self.actions = torch.tensor(self.actions, dtype=torch.float32)
+        # self.states = torch.tensor(self.states, dtype=torch.float32)
+        # self.actions = torch.tensor(self.actions, dtype=torch.float32)
         
     def __len__(self):
         return self.states.shape[0]
     
     def __getitem__(self, idx):
-        return self.states[idx], self.actions[idx]
+        state = torch.tensor(self.states[idx], dtype=torch.float32)
+        action = torch.tensor(self.actions[idx], dtype=torch.float32)
+        return state, action
+        # return self.states[idx], self.actions[idx]
 
 #########################
 # Model Components
@@ -146,15 +148,12 @@ if __name__ == "__main__":
     hidden_dim = 128
     
     # Load data
-    print("Load data--------------------------------")
-    train_loader = create_wall_dataloader(
-        data_path="/scratch/DL24FA/train",
-        probing=False,
-        device=device,
-        batch_size=128,
-        train=True,
-    )
-    print("Load data finish--------------------------------")
+    train_dataset = TrajectoryDataset("/scratch/DL24FA/train/states.npy", "/scratch/DL24FA/train/actions.npy")
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4, pin_memory=True)
+
+    # 检查数据加载是否正确
+    states, actions = next(iter(train_loader))
+    print(f"Sample states shape: {states.shape}, Sample actions shape: {actions.shape}")
     
     model = JEPA(state_dim=state_dim, action_dim=action_dim, hidden_dim=hidden_dim, ema_rate=0.99).to(device)
     if device == 'cuda':
