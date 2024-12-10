@@ -3,7 +3,7 @@ from evaluator import ProbingEvaluator
 import torch
 from models import MockModel
 import glob
-
+from anotherJEPA import JEPA
 
 def get_device():
     """Check for GPU availability."""
@@ -44,7 +44,22 @@ def load_data(device):
 def load_model():
     """Load or initialize the model."""
     # TODO: Replace MockModel with your trained model
-    model = MockModel()
+    state_dim = 128  # Should match the dimension used during training
+    action_dim = 2
+    hidden_dim = 128
+    ema_rate = 0.99
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = JEPA(state_dim=state_dim, action_dim=action_dim, hidden_dim=hidden_dim, ema_rate=ema_rate).to(device)
+
+    # Load the saved weights
+    model_path = "best_model.pth"
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        print(f"Model loaded successfully from {model_path} on {device}")
+    except FileNotFoundError:
+        print(f"Warning: {model_path} not found. Initializing a new model on {device}.")
+
     return model
 
 
