@@ -6,6 +6,7 @@ import numpy as np
 from copy import deepcopy
 from tqdm import tqdm
 import time
+from dataset import create_wall_dataloader
 
 #########################
 # Dataset and Dataloader
@@ -145,8 +146,15 @@ if __name__ == "__main__":
     hidden_dim = 128
     
     # Load data
-    train_dataset = TrajectoryDataset("subset_states.npy", "subset_actions.npy")
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+    print("Load data--------------------------------")
+    train_loader = create_wall_dataloader(
+        data_path="/scratch/DL24FA/train",
+        probing=False,
+        device=device,
+        batch_size=128,
+        train=True,
+    )
+    print("Load data finish--------------------------------")
     
     model = JEPA(state_dim=state_dim, action_dim=action_dim, hidden_dim=hidden_dim, ema_rate=0.99).to(device)
     if device == 'cuda':
