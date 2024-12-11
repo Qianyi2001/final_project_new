@@ -45,13 +45,13 @@ def location_losses(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 
 class ProbingEvaluator:
     def __init__(
-        self,
-        device: "cuda",
-        model: torch.nn.Module,
-        probe_train_ds,
-        probe_val_ds: dict,
-        config: ProbingConfig = default_config,
-        quick_debug: bool = False,
+            self,
+            device: "cuda",
+            model: torch.nn.Module,
+            probe_train_ds,
+            probe_val_ds: dict,
+            config: ProbingConfig = default_config,
+            quick_debug: bool = False,
     ):
         self.device = device
         self.config = config
@@ -68,12 +68,12 @@ class ProbingEvaluator:
 
     def train_pred_prober(self):
         """
-        Probes whether the predicted embeddings capture the future locations
+        使用递归方式（unrolling embeddings）的评估思路训练 prober。
+        假设 JEPA 模型可在单步输入下返回对应时间步的embedding。
         """
         repr_dim = self.model.repr_dim
         dataset = self.ds
         model = self.model
-
         config = self.config
         epochs = config.epochs
 
@@ -110,61 +110,61 @@ class ProbingEvaluator:
 
         for epoch in tqdm(range(epochs), desc=f"Probe prediction epochs"):
             for batch in tqdm(dataset, desc="Probe prediction step"):
-                ################################################################################
-                # TODO: Forward pass through your model
-                init_states = batch.states[:, 0:1]  # BS, 1, C, H, W
-                pred_encs = model(states=init_states, actions=batch.actions)
-                pred_encs = pred_encs.transpose(0, 1)  # # BS, T, D --> T, BS, D
 
-                # #2. recurrent - unrolling embeddings (uncomment this section and comment out other section as needed)
-                # pred_encs = []
+                # 使用递归生成 embeddings 的方式
+                # -----------------------------------------------------
+                # 初始embedding (根据模型需要修改，确保能从首个state获取embedding)
+                pred_encs = []
 
-                # #generate first embedding
-                # embedding = model(
-                #     states=batch.states[:, 0],
-                #     actions=batch.actions[:, 0],
-                #     hidden_state=None  #make sure to code for this scenario in RecurrentJEPA
-                # )
-                # pred_encs.append(embedding)
+                # 假设 model 接受单步输入并返回当前时刻 embedding
+                # 注意：此处只是示意，需要根据 JEPA 模型实际接口编写
+                # 例如：embedding = model.get_embedding_from_state(batch.states[:,0])
+                # 或者需要你在 JEPA 中实现一个函数来获取单步embedding。
 
-                # #recurrently generate embeddings for subsequent time steps
-                # for t in range(1, batch.states.size(1)):
-                #     embedding = model(
-                #         states=batch.states[:, t],
-                #         actions=batch.actions[:, t],
-                #         hidden_state=embedding
-                #     )
-                #     pred_encs.append(embedding)
+                # 首先对第 0 个时间步进行编码
+                embedding = model.online_encoder(batch.states[:, 0])  # (B, D)
+                pred_encs.append(embedding)
 
-                # pred_encs = torch.stack(pred_encs, dim=0)
+                # 对后续的时间步进行递归预测
+                # 假设actions维度为(B, T-1, action_dim)
+                # 对 t in [1, T-1]：
+                # 使用 predictor 根据 embedding 和 actions[:,t-1] 预测下一步 embedding
+                # 再对下一步 states 编码对比 (如果需要）
+                # 这里根据前embedding和action预测下一时刻的embedding，
+                # 或者你可以选择只用 predictor 预测未来embedding，不额外编码下一时刻state。
+                # 下方代码只是一个示意，需要你根据 JEPA forward逻辑适配。
 
-                # Make sure pred_encs has shape (T, BS, D) at this point
-                ################################################################################
+                T = batch.states.size(1)
+                for t in range(1, T):
+                    prev_embedding = pred_encs[-1]  # 上一个时间步的embedding
+                    prev_action = batch.actions[:, t - 1]  # 对应的action
+                    # 使用 predictor 获得下一步的预测embedding
+                    next_embedding = model.predictor(prev_embedding, prev_action)
+                    pred_encs.append(next_embedding)
+                # -----------------------------------------------------
 
-                pred_encs = pred_encs.detach()
+                pred_encs = torch.stack(pred_encs, dim=0)  # (T, B, D)
 
+                # 与非递归方式类似，后面处理目标和loss计算
                 n_steps = pred_encs.shape[0]
                 bs = pred_encs.shape[1]
-
-                losses_list = []
 
                 target = getattr(batch, "locations").cuda()
                 target = self.normalizer.normalize_location(target)
 
+                # 随机采样时间步以避免OOM
                 if (
-                    config.sample_timesteps is not None
-                    and config.sample_timesteps < n_steps
+                        config.sample_timesteps is not None
+                        and config.sample_timesteps < n_steps
                 ):
                     sample_shape = (config.sample_timesteps,) + pred_encs.shape[1:]
-                    # we only randomly sample n timesteps to train prober.
-                    # we most likely do this to avoid OOM
                     sampled_pred_encs = torch.empty(
                         sample_shape,
                         dtype=pred_encs.dtype,
                         device=pred_encs.device,
                     )
 
-                    sampled_target_locs = torch.empty(bs, config.sample_timesteps, 2)
+                    sampled_target_locs = torch.empty(bs, config.sample_timesteps, 2, device=pred_encs.device)
 
                     for i in range(bs):
                         indices = torch.randperm(n_steps)[: config.sample_timesteps]
@@ -172,19 +172,17 @@ class ProbingEvaluator:
                         sampled_target_locs[i, :] = target[i, indices]
 
                     pred_encs = sampled_pred_encs
-                    target = sampled_target_locs.cuda()
+                    target = sampled_target_locs
 
-                pred_locs = torch.stack([prober(x) for x in pred_encs], dim=1)
+                pred_locs = torch.stack([prober(x) for x in pred_encs], dim=1)  # (T_samp, B, 2) -> (B, T_samp, 2)
                 losses = location_losses(pred_locs, target)
                 per_probe_loss = losses.mean()
 
                 if step % 100 == 0:
                     print(f"normalized pred locations loss {per_probe_loss.item()}")
 
-                losses_list.append(per_probe_loss)
                 optimizer_pred_prober.zero_grad()
-                loss = sum(losses_list)
-                loss.backward()
+                per_probe_loss.backward()
                 optimizer_pred_prober.step()
 
                 lr = scheduler.adjust_learning_rate(step)
@@ -198,11 +196,11 @@ class ProbingEvaluator:
 
     @torch.no_grad()
     def evaluate_all(
-        self,
-        prober,
+            self,
+            prober,
     ):
         """
-        Evaluates on all the different validation datasets
+        对所有验证集进行评估
         """
         avg_losses = {}
 
@@ -217,10 +215,10 @@ class ProbingEvaluator:
 
     @torch.no_grad()
     def evaluate_pred_prober(
-        self,
-        prober,
-        val_ds,
-        prefix="",
+            self,
+            prober,
+            val_ds,
+            prefix="",
     ):
         quick_debug = self.quick_debug
         config = self.config
@@ -230,44 +228,29 @@ class ProbingEvaluator:
         prober.eval()
 
         for idx, batch in enumerate(tqdm(val_ds, desc="Eval probe pred")):
-            ################################################################################
-            # TODO: Forward pass through your model
-            init_states = batch.states[:, 0:1]  # BS, 1 C, H, W
-            pred_encs = model(states=init_states, actions=batch.actions)
-            # # BS, T, D --> T, BS, D
-            pred_encs = pred_encs.transpose(0, 1)
+            # 使用递归生成embeddings进行评估
+            pred_encs = []
+            embedding = model.online_encoder(batch.states[:, 0])
+            pred_encs.append(embedding)
 
-            # #2. recurrent - unrolling embeddings (uncomment this section and comment out other section as needed)
-            # pred_encs = []
+            T = batch.states.size(1)
+            for t in range(1, T):
+                prev_embedding = pred_encs[-1]
+                prev_action = batch.actions[:, t - 1]
+                next_embedding = model.predictor(prev_embedding, prev_action)
+                pred_encs.append(next_embedding)
 
-            # #generate first embedding
-            # embedding = model(
-            #     states=batch.states[:, 0],
-            #     actions=batch.actions[:, 0],
-            #     hidden_state=None  #make sure to code for this scenario in RecurrentJEPA
-            # )
-            # pred_encs.append(embedding)
-
-            # #recurrently generate embeddings for subsequent time steps
-            # for t in range(1, batch.states.size(1)):
-            #     embedding = model(
-            #         states=batch.states[:, t],
-            #         actions=batch.actions[:, t],
-            #         hidden_state=embedding
-            #     )
-            #     pred_encs.append(embedding)
-
-            # pred_encs = torch.stack(pred_encs, dim=0)
-
-            # Make sure pred_encs has shape (T, BS, D) at this point
-            ################################################################################
+            pred_encs = torch.stack(pred_encs, dim=0)  # (T, B, D)
 
             target = getattr(batch, "locations").cuda()
             target = self.normalizer.normalize_location(target)
 
-            pred_locs = torch.stack([prober(x) for x in pred_encs], dim=1)
+            pred_locs = torch.stack([prober(x) for x in pred_encs], dim=1)  # (T, B, 2) -> output shape (B, T, 2)
             losses = location_losses(pred_locs, target)
             probing_losses.append(losses.cpu())
+
+            if quick_debug and idx > 2:
+                break
 
         losses_t = torch.stack(probing_losses, dim=0).mean(dim=0)
         losses_t = self.normalizer.unnormalize_mse(losses_t)
