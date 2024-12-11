@@ -55,9 +55,7 @@ def load_model():
     # Load the saved weights
     model_path = "best_model.pth"
     try:
-        checkpoint = torch.load(model_path, map_location=device)
-        state_dict = {k.replace("_orig_mod.", ""): v for k, v in checkpoint.items()}
-        model.load_state_dict(state_dict)
+        model.load_state_dict(torch.load(model_path, map_location=device))
         print(f"Model loaded successfully from {model_path} on {device}")
     except FileNotFoundError:
         print(f"Warning: {model_path} not found. Initializing a new model on {device}.")
