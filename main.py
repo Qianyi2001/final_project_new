@@ -52,13 +52,18 @@ def load_model():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = JEPA(state_dim=state_dim, action_dim=action_dim, hidden_dim=hidden_dim, ema_rate=ema_rate).to(device)
 
-    # Load the saved weights
+    def remove_prefix(state_dict, prefix):
+        """Remove prefix from state_dict keys."""
+        return {k[len(prefix):]: v for k, v in state_dict.items() if k.startswith(prefix)}
+
     model_path = "best_model.pth"
-    try:
-        model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
-        print(f"Model loaded successfully from {model_path} on {device}")
-    except FileNotFoundError:
-        print(f"Warning: {model_path} not found. Initializing a new model on {device}.")
+    checkpoint = torch.load(model_path, map_location=device)
+
+    # Remove "_orig_mod." prefix if it exists
+    if any(k.startswith("_orig_mod.") for k in checkpoint.keys()):
+        checkpoint = remove_prefix(checkpoint, "_orig_mod.")
+
+    model.load_state_dict(checkpoint)
 
     return model
 
