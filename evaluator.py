@@ -20,7 +20,7 @@ from normalizer import Normalizer
 @dataclass
 class ProbingConfig(ConfigBase):
     probe_targets: str = "locations"
-    lr: float = 0.00005
+    lr: float = 0.0002
     epochs: int = 20
     schedule: LRSchedule = LRSchedule.Cosine
     sample_timesteps: int = 30
@@ -116,8 +116,9 @@ class ProbingEvaluator:
                 states = batch.states.to(self.device)  # 不仅取0:1，而是全部时间步
                 actions = batch.actions.to(self.device)
                 with torch.no_grad():
-                    pred_encs = model.online_encoder(states)  # (B,T,D) T与target保持一致
-                    pred_encs = pred_encs.transpose(0, 1)
+                    predicted_states, target_next_states = model.forward(states, actions)
+                    # predicted_states形状为 (B, T-1, D_s)，如果需要 (T, B, D_s)，可以转置：
+                    pred_encs = predicted_states.transpose(0, 1)
                     # init_states = batch.states[:, 0:1]  # BS, 1, C, H, W
                 # pred_encs = model(states=init_states, actions=batch.actions)
                 # pred_encs = pred_encs.transpose(0, 1)  # # BS, T, D --> T, BS, D
@@ -243,8 +244,10 @@ class ProbingEvaluator:
             # TODO: Forward pass through your model
             states = batch.states.to(self.device)
             actions = batch.actions.to(self.device)
-            pred_encs = model.online_encoder(states)  # (B,T,D)
-            pred_encs = pred_encs.transpose(0, 1)
+            with torch.no_grad():
+                predicted_states, target_next_states = model.forward(states, actions)
+                # predicted_states形状为 (B, T-1, D_s)，如果需要 (T, B, D_s)，可以转置：
+                pred_encs = predicted_states.transpose(0, 1)
             # init_states = batch.states[:, 0:1]  # BS, 1 C, H, W
             # pred_encs = model(states=init_states, actions=batch.actions)
             # # # BS, T, D --> T, BS, D
