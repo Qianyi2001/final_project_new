@@ -55,7 +55,7 @@ def load_model():
     # Load the saved weights
     model_path = "best_model.pth"
     try:
-        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.load_state_dict(torch.load(model_path, map_location=device), strict=False)
         print(f"Model loaded successfully from {model_path} on {device}")
     except FileNotFoundError:
         print(f"Warning: {model_path} not found. Initializing a new model on {device}.")
